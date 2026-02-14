@@ -1,346 +1,252 @@
 import requests
 import json
 from bs4 import BeautifulSoup
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse, parse_qs
 import time
 import sys
 import random
+import re
 
 def banner():
-    # Simple banner without any identifiers
-    print("\033[1;36m")  # Cyan color
+    print("\033[1;36m")
     print("""
 ╔══════════════════════════════════════════════════════════╗
 ║         Instagram Media Extractor - Research Tool        ║
 ║                 For Educational Purposes Only            ║
 ╚══════════════════════════════════════════════════════════╝
     """)
-    print("\033[0m") # Color reset
+    print("\033[0m")
 
-# Rotating user agents to avoid detection
 USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0',
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0',
     'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Mozilla/5.0 (iPhone; CPU iPhone OS 17_1_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1',
-    'Mozilla/5.0 (iPad; CPU OS 17_1_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1',
-    'Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-    'Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 OPR/106.0.0.0',
 ]
 
-# Multiple header configurations to rotate through
-HEADER_TEMPLATES = [
-    {
+def get_random_headers():
+    return {
         'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
         'accept-language': 'en-US,en;q=0.5',
         'accept-encoding': 'gzip, deflate, br',
         'dnt': '1',
         'connection': 'keep-alive',
         'upgrade-insecure-requests': '1',
-    },
-    {
-        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'accept-language': 'en-GB,en;q=0.9',
-        'accept-encoding': 'gzip, deflate, br',
-        'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-        'sec-ch-ua-mobile': '?0',
-        'sec-ch-ua-platform': '"Windows"',
-        'sec-fetch-dest': 'document',
-        'sec-fetch-mode': 'navigate',
-        'sec-fetch-site': 'none',
-        'sec-fetch-user': '?1',
-        'upgrade-insecure-requests': '1',
-    },
-    {
-        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'accept-language': 'en-US,en;q=0.9',
-        'accept-encoding': 'gzip, deflate',
-        'connection': 'keep-alive',
-        'upgrade-insecure-requests': '1',
+        'user-agent': random.choice(USER_AGENTS),
     }
-]
 
-def get_random_headers():
-    """Generate random headers to avoid fingerprinting"""
-    headers = random.choice(HEADER_TEMPLATES).copy()
-    headers['user-agent'] = random.choice(USER_AGENTS)
+def extract_json_from_html(html_content):
+    """Extract JSON data from HTML using multiple methods"""
+    json_data = {}
     
-    # Add random but realistic headers
-    if random.choice([True, False]):
-        headers['viewport-width'] = str(random.choice([1920, 1536, 1366, 1280, 375, 390]))
-    
-    return headers
-
-def fetch_instagram_profile(username):
-    """
-    Fetches Instagram profile page for the given username with rotating headers.
-    """
-    url = f'https://www.instagram.com/{username}/'
-    
-    # Try with different headers if first attempt fails
-    max_attempts = 3
-    for attempt in range(max_attempts):
-        headers = get_random_headers()
-        print(f"[*] Fetching profile: {username} (Attempt {attempt + 1}/{max_attempts})")
-        
+    # Method 1: Look for __sharedData__ (older Instagram)
+    shared_data_match = re.search(r'window\._sharedData\s*=\s*({.*?});', html_content, re.DOTALL)
+    if shared_data_match:
         try:
-            # Add small delay between attempts
-            if attempt > 0:
-                time.sleep(random.uniform(2, 4))
+            json_data['shared_data'] = json.loads(shared_data_match.group(1))
+            print("[+] Found _sharedData JSON")
+        except:
+            pass
+    
+    # Method 2: Look for __additionalData
+    additional_data_match = re.search(r'window\.__additionalDataLoaded\s*\(\s*[\'"]([^\'"]+)[\'"]\s*,\s*({.*?})\s*\)\s*;', html_content, re.DOTALL)
+    if additional_data_match:
+        try:
+            json_data['additional_data'] = json.loads(additional_data_match.group(2))
+            print("[+] Found __additionalData JSON")
+        except:
+            pass
+    
+    # Method 3: Look for __instadate
+    insta_date_match = re.search(r'window\.__instadate\s*=\s*({.*?});', html_content, re.DOTALL)
+    if insta_date_match:
+        try:
+            json_data['insta_date'] = json.loads(insta_date_match.group(1))
+            print("[+] Found __instadate JSON")
+        except:
+            pass
+    
+    # Method 4: Look for __APOLLO_STATE__
+    apollo_match = re.search(r'window\.__APOLLO_STATE__\s*=\s*({.*?});', html_content, re.DOTALL)
+    if apollo_match:
+        try:
+            json_data['apollo_state'] = json.loads(apollo_match.group(1))
+            print("[+] Found __APOLLO_STATE__ JSON")
+        except:
+            pass
+    
+    # Method 5: Look for __ROOT_QUERY__
+    root_query_match = re.search(r'window\.__ROOT_QUERY__\s*=\s*({.*?});', html_content, re.DOTALL)
+    if root_query_match:
+        try:
+            json_data['root_query'] = json.loads(root_query_match.group(1))
+            print("[+] Found __ROOT_QUERY__ JSON")
+        except:
+            pass
+    
+    # Method 6: Look for any large JSON object in script tags
+    soup = BeautifulSoup(html_content, 'html.parser')
+    for script in soup.find_all('script'):
+        if script.string:
+            # Look for JSON-like content
+            json_match = re.search(r'({[\s\S]*})', script.string)
+            if json_match:
+                try:
+                    potential_json = json_match.group(1)
+                    # Try to parse it
+                    parsed = json.loads(potential_json)
+                    if isinstance(parsed, dict) and len(str(parsed)) > 1000:  # Only store large JSON objects
+                        json_data[f'script_json_{len(json_data)}'] = parsed
+                        print(f"[+] Found JSON in script tag ({len(str(parsed))} chars)")
+                except:
+                    pass
+    
+    return json_data
+
+def extract_media_from_graphql(data):
+    """Extract media URLs from GraphQL data structure"""
+    urls = set()
+    
+    def recursive_extract(obj, path=""):
+        if isinstance(obj, dict):
+            # Look for common Instagram media patterns
+            if 'display_url' in obj and obj['display_url']:
+                urls.add(('unknown', 'unknown', obj['display_url']))
             
-            response = requests.get(
-                url, 
-                headers=headers, 
-                timeout=15,
-                allow_redirects=True
-            )
+            if 'display_src' in obj and obj['display_src']:
+                urls.add(('unknown', 'unknown', obj['display_src']))
             
-            if response.status_code == 200:
-                print("[+] Successfully fetched profile page")
-                return response
-            elif response.status_code == 429:
-                print(f"[-] Rate limited (429). Waiting longer before retry...")
-                time.sleep(random.uniform(5, 10))
-            elif response.status_code == 403:
-                print(f"[-] Access forbidden (403). Trying different headers...")
-            else:
-                print(f"[-] Received status code {response.status_code}")
-                
-        except requests.exceptions.Timeout:
-            print(f"[-] Request timeout on attempt {attempt + 1}")
-        except requests.exceptions.ConnectionError:
-            print(f"[-] Connection error on attempt {attempt + 1}")
-        except requests.exceptions.RequestException as e:
-            print(f"[-] Request error: {e}")
+            if 'thumbnail_src' in obj and obj['thumbnail_src']:
+                urls.add(('unknown', 'unknown', obj['thumbnail_src']))
+            
+            # Check for image versions
+            if 'image_versions2' in obj:
+                candidates = obj['image_versions2'].get('candidates', [])
+                for candidate in candidates:
+                    if 'url' in candidate:
+                        url = candidate['url']
+                        height = candidate.get('height', 0)
+                        width = candidate.get('width', 0)
+                        resolution = f"{width}x{height}" if width and height else "unknown"
+                        urls.add(('unknown', resolution, url))
+            
+            # Check for display_resources
+            if 'display_resources' in obj:
+                for resource in obj['display_resources']:
+                    if 'src' in resource:
+                        url = resource['src']
+                        height = resource.get('config_height', 0)
+                        width = resource.get('config_width', 0)
+                        resolution = f"{width}x{height}" if width and height else "unknown"
+                        urls.add(('unknown', resolution, url))
+            
+            # Recursively process all values
+            for key, value in obj.items():
+                if isinstance(value, (dict, list)):
+                    recursive_extract(value, f"{path}.{key}" if path else key)
+        
+        elif isinstance(obj, list):
+            for item in obj:
+                recursive_extract(item, path)
     
-    print("[-] Failed to fetch profile after multiple attempts")
-    return None
-
-def extract_timeline_data(html_content):
-    """Extract timeline data from Instagram page"""
-    try:
-        soup = BeautifulSoup(html_content, 'html.parser')
-        
-        # Try multiple script tag patterns
-        script_patterns = [
-            {'type': 'application/json'},
-            {'type': 'text/javascript'},
-            {'id': '__NEXT_DATA__'},
-            {'id': 'additionalData'}
-        ]
-        
-        all_scripts = []
-        for pattern in script_patterns:
-            scripts = soup.find_all('script', pattern)
-            all_scripts.extend(scripts)
-        
-        # Remove duplicates while preserving order
-        seen = set()
-        unique_scripts = []
-        for script in all_scripts:
-            if script.string and script.string not in seen:
-                seen.add(script.string)
-                unique_scripts.append(script)
-        
-        print(f"[*] Found {len(unique_scripts)} unique script tags")
-
-        for script in unique_scripts:
-            if script.string:
-                script_content = script.string
-                
-                # Look for Instagram data patterns
-                instagram_patterns = [
-                    'edge_owner_to_timeline_media',
-                    'graphql',
-                    'user',
-                    'media',
-                    'image_versions2',
-                    'display_url',
-                    'display_src'
-                ]
-                
-                # Check if content contains Instagram data
-                content_lower = script_content.lower()
-                if any(pattern in content_lower for pattern in instagram_patterns):
-                    try:
-                        # Try to parse JSON
-                        data = json.loads(script_content)
-                        
-                        # Verify it contains media data
-                        if 'graphql' in str(data) or 'media' in str(data):
-                            print("[+] Found script with media data")
-                            return data
-                    except json.JSONDecodeError:
-                        # Try to extract JSON from within JavaScript
-                        try:
-                            import re
-                            # Look for JSON object in JavaScript
-                            json_match = re.search(r'({.*})', script_content, re.DOTALL)
-                            if json_match:
-                                data = json.loads(json_match.group(1))
-                                print("[+] Extracted JSON data from script")
-                                return data
-                        except:
-                            continue
-
-        print("[-] Media data not found in any script tag")
-        return None
-        
-    except Exception as e:
-        print(f"[-] Error extracting data: {e}")
-        return None
-
-def decode_url(escaped_url):
-    """Decode URL with multiple methods"""
-    try:
-        # Try unicode escape first
-        decoded = escaped_url.encode('utf-8').decode('unicode_escape')
-    except:
-        decoded = escaped_url
-
-    # URL decode
-    decoded = unquote(decoded)
-    
-    # Handle Instagram CDN URLs
-    if 'cdninstagram.com' in decoded and '\\u0026' in decoded:
-        decoded = decoded.replace('\\u0026', '&')
-    
-    return decoded
-
-def extract_all_image_urls_recursive(obj, urls=None, post_id=None):
-    """Recursively extract all image URLs from Instagram data"""
-    if urls is None:
-        urls = set()
-
-    if isinstance(obj, dict):
-        # Capture post ID
-        if 'id' in obj and isinstance(obj.get('id'), (str, int)) and 'post' in str(obj):
-            post_id = str(obj['id'])
-        elif 'pk' in obj and isinstance(obj.get('pk'), (str, int)):
-            post_id = str(obj['pk'])
-        elif 'code' in obj and isinstance(obj.get('code'), str):
-            post_id = obj['code']
-
-        # Look for image URLs in various Instagram structures
-        image_patterns = [
-            ('image_versions2', 'candidates'),
-            ('display_resources', None),
-            ('display_src', None),
-            ('display_url', None),
-            ('thumbnail_src', None),
-        ]
-        
-        for pattern, subpattern in image_patterns:
-            if pattern in obj:
-                if subpattern and isinstance(obj[pattern], dict) and subpattern in obj[pattern]:
-                    candidates = obj[pattern][subpattern]
-                    if isinstance(candidates, list):
-                        for candidate in candidates:
-                            if isinstance(candidate, dict):
-                                url = candidate.get('src') or candidate.get('url')
-                                if url:
-                                    height = candidate.get('height', 0)
-                                    width = candidate.get('width', 0)
-                                    resolution = f"{width}x{height}" if width and height else "unknown"
-                                    decoded_url = decode_url(url)
-                                    urls.add((post_id or 'unknown', resolution, decoded_url))
-                
-                elif isinstance(obj[pattern], str):
-                    url = obj[pattern]
-                    decoded_url = decode_url(url)
-                    urls.add((post_id or 'unknown', 'unknown', decoded_url))
-
-        # Recursively process all values
-        for value in obj.values():
-            extract_all_image_urls_recursive(value, urls, post_id)
-
-    elif isinstance(obj, list):
-        for item in obj:
-            extract_all_image_urls_recursive(item, urls, post_id)
-
+    recursive_extract(data)
     return urls
 
-def save_urls_to_file(image_urls, filename='instagram_media_urls.txt'):
-    """Save extracted URLs to file"""
-    urls_by_post = {}
-    for post_id, resolution, url in image_urls:
-        if post_id not in urls_by_post:
-            urls_by_post[post_id] = []
-        urls_by_post[post_id].append((resolution, url))
-
-    try:
-        with open(filename, 'w', encoding='utf-8') as f:
-            f.write("Instagram Media URLs - Research Data\n")
-            f.write("=" * 80 + "\n\n")
-            f.write(f"Extraction Time: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write(f"Total Posts Found: {len(urls_by_post)}\n")
-            f.write(f"Total Media URLs: {len(image_urls)}\n\n")
-            f.write("=" * 80 + "\n\n")
-
-            # Sort posts by ID for consistency
-            sorted_posts = sorted(urls_by_post.items())
-            
-            for post_id, resolutions in sorted_posts:
-                f.write(f"POST ID: {post_id}\n")
-                f.write(f"Media Items: {len(resolutions)}\n")
-                f.write("-" * 80 + "\n")
-
-                for i, (resolution, url) in enumerate(resolutions, 1):
-                    f.write(f"\n  Media {i}:\n")
-                    f.write(f"  Resolution: {resolution}\n")
-                    f.write(f"  URL: {url}\n")
-
-                f.write("\n" + "=" * 80 + "\n\n")
-
-        print(f"[+] Saved {len(image_urls)} URLs from {len(urls_by_post)} posts to {filename}")
-        return True
-    except Exception as e:
-        print(f"[-] Error saving to file: {e}")
-        return False
-
-def display_results_summary(image_urls):
-    """Display summary of extracted data"""
-    urls_list = sorted(list(image_urls), key=lambda x: (x[0], x[1]))
-    posts_count = len(set(url[0] for url in urls_list))
+def extract_media_from_apollo_state(data):
+    """Extract media URLs from Apollo state data"""
+    urls = set()
     
-    # Count resolutions
-    resolutions = {}
-    for _, resolution, _ in urls_list:
-        resolutions[resolution] = resolutions.get(resolution, 0) + 1
+    for key, value in data.items():
+        if isinstance(value, dict):
+            # Look for media nodes
+            if value.get('__typename') in ['GraphImage', 'GraphVideo', 'GraphSidecar']:
+                if 'display_url' in value:
+                    urls.add(('unknown', 'unknown', value['display_url']))
+                
+                # Check for dimensions
+                if 'dimensions' in value:
+                    dims = value['dimensions']
+                    width = dims.get('width', 0)
+                    height = dims.get('height', 0)
+                    resolution = f"{width}x{height}" if width and height else "unknown"
+                    
+                    # Re-add with resolution
+                    urls_list = list(urls)
+                    urls.clear()
+                    for pid, res, url in urls_list:
+                        if url == value.get('display_url', ''):
+                            urls.add((pid, resolution, url))
+                        else:
+                            urls.add((pid, res, url))
+            
+            # Check for thumbnail resources
+            if 'thumbnail_resources' in value:
+                for resource in value['thumbnail_resources']:
+                    if 'src' in resource:
+                        urls.add(('unknown', 'unknown', resource['src']))
+    
+    return urls
 
-    print()
-    print("=" * 80)
-    print("EXTRACTION SUMMARY")
-    print("=" * 80)
-    print(f"Total Posts Found: {posts_count}")
-    print(f"Total Media URLs: {len(urls_list)}")
-    print("\nResolution Distribution:")
-    for res, count in sorted(resolutions.items(), key=lambda x: int(x[0].split('x')[0]) if 'x' in x[0] else 0, reverse=True)[:5]:
-        print(f"  {res}: {count} images")
-    print("=" * 80)
-    print()
+def fetch_instagram_profile_enhanced(username):
+    """
+    Enhanced Instagram profile fetcher with multiple methods
+    """
+    # Try direct profile page
+    url = f'https://www.instagram.com/{username}/'
+    
+    # Also try API endpoints
+    api_urls = [
+        f'https://www.instagram.com/api/v1/users/web_profile_info/?username={username}',
+        f'https://i.instagram.com/api/v1/users/web_profile_info/?username={username}',
+        f'https://www.instagram.com/{username}/?__a=1&__d=dis',
+    ]
+    
+    headers = get_random_headers()
+    
+    # Method 1: Try direct page
+    print(f"[*] Attempting to fetch profile: {username}")
+    try:
+        session = requests.Session()
+        response = session.get(url, headers=headers, timeout=15)
+        
+        if response.status_code == 200:
+            print("[+] Successfully fetched profile page")
+            return response.text
+    except Exception as e:
+        print(f"[-] Direct fetch failed: {e}")
+    
+    # Method 2: Try API endpoints
+    for i, api_url in enumerate(api_urls, 1):
+        print(f"[*] Trying API endpoint {i}...")
+        try:
+            time.sleep(random.uniform(1, 3))
+            api_headers = headers.copy()
+            api_headers['x-requested-with'] = 'XMLHttpRequest'
+            
+            response = session.get(api_url, headers=api_headers, timeout=10)
+            if response.status_code == 200:
+                print(f"[+] API endpoint {i} successful")
+                return response.text
+        except:
+            continue
+    
+    return None
 
 def main(username=None):
-    """Main function"""
-    # Display banner
     banner()
-
+    
     print("=" * 80)
     print("Instagram Media Extractor - Research Tool")
     print("For Educational and Research Purposes Only")
     print("=" * 80)
     print()
 
-    # Get username from parameter or prompt
     if not username:
         try:
             username = input("Enter Instagram username to analyze: ").strip()
         except EOFError:
             print("[-] Cannot read input. Please provide username as argument.")
-            print("Usage: python script.py <username>")
             return
 
     if not username:
@@ -350,49 +256,91 @@ def main(username=None):
     print()
     print("[!] DISCLAIMER: This tool is for educational purposes only.")
     print("[!] Only use on accounts you own or have permission to analyze.")
-    print("[!] Respect Instagram's Terms of Service and rate limits.")
     print()
 
     time.sleep(2)
 
-    # Fetch profile
-    response = fetch_instagram_profile(username)
+    # Fetch profile with enhanced method
+    html_content = fetch_instagram_profile_enhanced(username)
 
-    if not response:
+    if not html_content:
         print("[-] Failed to fetch profile page")
         return
 
-    # Extract data
-    timeline_data = extract_timeline_data(response.text)
-
-    if not timeline_data:
-        print("[-] Failed to extract media data")
-        return
-
-    print()
-    print("[*] Extracting all media URLs recursively...")
-    print("[*] This may take a moment depending on the number of posts...")
+    # Extract JSON data from HTML
+    print("\n[*] Extracting JSON data from page...")
+    json_data = extract_json_from_html(html_content)
     
-    image_urls = extract_all_image_urls_recursive(timeline_data)
-
-    if not image_urls:
+    all_urls = set()
+    
+    # Process each JSON data source
+    for data_source, data in json_data.items():
+        print(f"\n[*] Processing {data_source}...")
+        
+        # Try to extract media from GraphQL structure
+        urls = extract_media_from_graphql(data)
+        if urls:
+            print(f"[+] Found {len(urls)} media URLs in {data_source}")
+            all_urls.update(urls)
+        
+        # Try Apollo state extraction
+        if 'apollo_state' in data_source or isinstance(data, dict):
+            apollo_urls = extract_media_from_apollo_state(data)
+            if apollo_urls:
+                print(f"[+] Found {len(apollo_urls)} media URLs in Apollo state")
+                all_urls.update(apollo_urls)
+    
+    # Also try direct regex for image URLs
+    print("\n[*] Scanning for direct image URLs...")
+    image_pattern = r'https?://[^\s"\']+\.(?:jpg|jpeg|png|gif|webp)[^\s"\']*'
+    direct_urls = re.findall(image_pattern, html_content)
+    
+    if direct_urls:
+        # Filter Instagram CDN URLs
+        insta_urls = [url for url in direct_urls if 'cdninstagram.com' in url or 'fbcdn.net' in url]
+        for url in insta_urls[:50]:  # Limit to avoid duplicates
+            all_urls.add(('unknown', 'unknown', url))
+        print(f"[+] Found {len(insta_urls)} direct image URLs")
+    
+    if not all_urls:
         print("[-] No media URLs found")
         return
-
+    
     # Display results
-    display_results_summary(image_urls)
-
+    print("\n" + "=" * 80)
+    print(f"EXTRACTION SUMMARY")
+    print("=" * 80)
+    print(f"Total Media URLs Found: {len(all_urls)}")
+    
+    # Sample some URLs
+    print("\nSample URLs (first 5):")
+    for i, (_, _, url) in enumerate(list(all_urls)[:5]):
+        print(f"  {i+1}. {url[:100]}...")
+    
+    print("=" * 80)
+    print()
+    
     # Save to file
     filename = f"instagram_{username}_media_urls.txt"
-    save_urls_to_file(image_urls, filename)
-
+    try:
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.write(f"Instagram Media URLs for @{username}\n")
+            f.write(f"Extracted: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write("=" * 80 + "\n\n")
+            
+            for i, (_, resolution, url) in enumerate(sorted(all_urls), 1):
+                f.write(f"{i}. {url}\n")
+                if resolution != 'unknown':
+                    f.write(f"   Resolution: {resolution}\n")
+        
+        print(f"[+] Saved {len(all_urls)} URLs to {filename}")
+    except Exception as e:
+        print(f"[-] Error saving file: {e}")
+    
     print()
     print("[+] Analysis Complete")
-    print(f"[*] Results saved to: {filename}")
-    print()
 
 if __name__ == "__main__":
-    # Handle command line arguments
     if len(sys.argv) > 1:
         main(sys.argv[1])
     else:
