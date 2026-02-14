@@ -1,11 +1,10 @@
 import subprocess
 import json
 import os
-import tempfile
+import sys
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import io
-import sys
 
 app = Flask(__name__)
 CORS(app)
@@ -13,42 +12,22 @@ CORS(app)
 def run_spydox_extractor(username):
     """Run the spydox extractor and capture output"""
     try:
-        # Create a temporary file for output
-        with tempfile.NamedTemporaryFile(mode='w+', suffix='.txt', delete=False) as tmp:
-            output_file = tmp.name
-        
         # Run the spydox script with username
         result = subprocess.run(
             [sys.executable, 'spydox.py', username],
             capture_output=True,
             text=True,
-            timeout=60,
-            env={**os.environ, 'PYTHONUNBUFFERED': '1'}
+            timeout=60
         )
         
-        print(f"[*] stdout: {result.stdout}")
-        print(f"[*] stderr: {result.stderr}")
+        # Combine stdout and stderr
+        output = result.stdout + result.stderr
         
-        # Check if the script created extracted_urls.txt
-        if os.path.exists('extracted_urls.txt'):
-            with open('extracted_urls.txt', 'r') as f:
-                content = f.read()
-            os.remove('extracted_urls.txt')
-            return {"success": True, "file_content": content}
-        
-        # Check if any output file was created
-        for file in os.listdir('.'):
-            if file.endswith('.txt') and 'extracted' in file:
-                with open(file, 'r') as f:
-                    content = f.read()
-                os.remove(file)
-                return {"success": True, "file_content": content}
-        
-        # If no file, return the stdout
-        if result.stdout:
-            return {"success": True, "file_content": result.stdout}
-        else:
-            return {"success": False, "error": "No output generated", "stderr": result.stderr}
+        return {
+            "success": True,
+            "file_content": output,
+            "username": username
+        }
             
     except subprocess.TimeoutExpired:
         return {"success": False, "error": "Extraction timeout"}
@@ -108,6 +87,5 @@ def download(username):
         return jsonify(result)
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 8080))
-    print(f"[+] Starting Spydox API on port {port}")
-    app.run(host='0.0.0.0', port=port, debug=False)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
