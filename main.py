@@ -2,8 +2,8 @@ import subprocess
 import json
 import os
 import sys
-import time
 import re
+import tempfile
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import io
@@ -12,153 +12,159 @@ app = Flask(__name__)
 CORS(app)
 
 def run_spydox_extractor(username):
-    """Run the spydox extractor and capture the extracted_urls.txt file"""
+    """Run the spydox extractor and capture output directly"""
     try:
-        # Clean up any existing extracted_urls.txt file
-        if os.path.exists('extracted_urls.txt'):
-            os.remove('extracted_urls.txt')
+        # Create a temporary directory in /tmp (writable on Vercel)
+        temp_dir = tempfile.mkdtemp()
+        original_dir = os.getcwd()
         
-        # Run the spydox script with username (it will generate extracted_urls.txt)
-        result = subprocess.run(
-            [sys.executable, 'spydox.py'],
-            input=username + '\n',  # Send username as input
-            capture_output=True,
-            text=True,
-            timeout=120  # Increased timeout for larger accounts
+        # Change to temp directory to isolate file writes
+        os.chdir(temp_dir)
+        
+        # Run the spydox script with username as input
+        process = subprocess.Popen(
+            [sys.executable, os.path.join(original_dir, 'spydox.py')],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
         )
         
-        # Wait a moment for file to be written
-        time.sleep(1)
+        # Send username as input
+        stdout, stderr = process.communicate(input=username + '\n', timeout=60)
         
-        # Check if extracted_urls.txt was created
-        if os.path.exists('extracted_urls.txt'):
-            # Read and parse the extracted_urls.txt file
-            image_urls = parse_extracted_urls_file('extracted_urls.txt')
+        # Capture console output
+        console_output = stdout + stderr
+        
+        # Check if extracted_urls.txt was created in temp directory
+        extracted_file = os.path.join(temp_dir, 'extracted_urls.txt')
+        image_urls = []
+        
+        if os.path.exists(extracted_file):
+            # Read the file content
+            with open(extracted_file, 'r', encoding='utf-8') as f:
+                file_content = f.read()
             
-            # Also get console output
-            console_output = result.stdout + result.stderr
+            # Extract URLs from file content
+            image_urls = extract_urls_from_text(file_content)
             
-            return {
-                "success": True,
-                "username": username,
-                "console_output": console_output,
-                "image_urls": image_urls,
-                "total_images": len(image_urls),
-                "file_generated": True
-            }
-        else:
-            return {
-                "success": False,
-                "error": "extracted_urls.txt was not generated",
-                "console_output": result.stdout + result.stderr,
-                "username": username
-            }
+            # Also try to extract from console output as backup
+            if not image_urls:
+                image_urls = extract_urls_from_text(console_output)
+            
+            # Clean up
+            os.remove(extracted_file)
+        
+        # If no URLs found in file, try console output
+        if not image_urls:
+            image_urls = extract_urls_from_text(console_output)
+        
+        # Change back to original directory
+        os.chdir(original_dir)
+        
+        # Clean up temp directory
+        try:
+            os.rmdir(temp_dir)
+        except:
+            pass
+        
+        return {
+            "success": True,
+            "username": username,
+            "console_output": console_output[:1000] + "..." if len(console_output) > 1000 else console_output,
+            "image_urls": image_urls,
+            "total_images": len(image_urls),
+            "file_generated": os.path.exists(extracted_file) if 'extracted_file' in locals() else False,
+            "method": "direct_extraction"
+        }
             
     except subprocess.TimeoutExpired:
         return {"success": False, "error": "Extraction timeout"}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
-def parse_extracted_urls_file(filename):
-    """Parse the extracted_urls.txt file and extract only image URLs"""
-    image_urls = []
+def extract_urls_from_text(text):
+    """Extract image URLs from text content"""
+    urls = []
     
+    # URL patterns for Instagram images
+    patterns = [
+        # Direct image URLs
+        r'https?://[^\s]+\.(?:jpg|jpeg|png|gif|webp)[^\s]*',
+        r'https?://[^\s]*(?:instagram|cdninstagram|fbcdn)[^\s]*\.(?:jpg|jpeg|png|gif|webp)[^\s]*',
+        
+        # URLs in the format "URL: https://..."
+        r'URL:\s*(https?://[^\s]+)',
+        
+        # Instagram post URLs
+        r'https?://(?:www\.)?instagram\.com/p/[A-Za-z0-9_-]+',
+        
+        # Any http/https URL that might be an image
+        r'(https?://[^\s]+(?:jpg|jpeg|png|gif|webp)[^\s]*)',
+        r'(https?://[^\s]+media[^\s]+)',
+    ]
+    
+    for pattern in patterns:
+        found = re.findall(pattern, text, re.IGNORECASE)
+        for url in found:
+            # Clean up URL
+            if isinstance(url, tuple):
+                url = url[0]  # Take first group if multiple
+            url = re.sub(r'[,\s"\']+$', '', str(url))
+            
+            # Validate URL
+            if url.startswith(('http://', 'https://')) and len(url) > 10:
+                if url not in urls:  # Avoid duplicates
+                    urls.append(url)
+    
+    return urls
+
+@app.route('/debug/vercel', methods=['GET'])
+def debug_vercel():
+    """Debug endpoint to check Vercel environment"""
+    import tempfile
+    
+    # Test file writing
+    test_results = {}
+    
+    # Test 1: Write to current directory
     try:
-        with open(filename, 'r', encoding='utf-8') as file:
-            content = file.read()
-            
-            # Method 1: Extract URLs using regex pattern for Instagram image URLs
-            # Instagram image URLs typically contain these patterns
-            url_patterns = [
-                r'https?://[^\s]+\.(?:jpg|jpeg|png|gif|webp)[^\s]*',
-                r'https?://[^\s]+instagram[^\s]+/p/[^\s]+',
-                r'https?://[^\s]+cdninstagram[^\s]+',
-                r'https?://[^\s]+fbcdn[^\s]+',
-                r'URL:\s*(https?://[^\s]+)',
-                r'(https?://[^\s]+\.(?:jpg|jpeg|png|gif|webp))',
-            ]
-            
-            # Try each pattern
-            for pattern in url_patterns:
-                found_urls = re.findall(pattern, content, re.IGNORECASE)
-                if found_urls:
-                    # Clean and validate URLs
-                    for url in found_urls:
-                        # Remove trailing punctuation if any
-                        url = re.sub(r'[,\s]+$', '', url)
-                        if url.startswith(('http://', 'https://')) and len(url) > 10:
-                            if url not in image_urls:  # Avoid duplicates
-                                image_urls.append(url)
-            
-            # Method 2: Parse line by line looking for URLs
-            lines = content.split('\n')
-            for line in lines:
-                # Look for lines containing URL or http
-                if 'URL:' in line or 'http' in line.lower():
-                    # Extract URL from line
-                    url_match = re.search(r'(https?://[^\s]+)', line)
-                    if url_match:
-                        url = url_match.group(1)
-                        # Clean up URL
-                        url = re.sub(r'[,\s]+$', '', url)
-                        if url.startswith(('http://', 'https://')):
-                            if url not in image_urls:
-                                image_urls.append(url)
-            
-            # Method 3: Parse structured format
-            posts_data = []
-            current_post = {}
-            reading_urls = False
-            
-            for line in lines:
-                if line.startswith('POST ID:'):
-                    if current_post:
-                        posts_data.append(current_post)
-                    current_post = {'post_id': line.replace('POST ID:', '').strip(), 'images': []}
-                elif line.startswith('  Image'):
-                    reading_urls = True
-                elif reading_urls and 'URL:' in line:
-                    url_match = re.search(r'URL:\s*(https?://[^\s]+)', line)
-                    if url_match:
-                        url = url_match.group(1)
-                        if url not in image_urls:
-                            image_urls.append(url)
-                        if current_post:
-                            current_post['images'].append(url)
-            
-            # Add last post
-            if current_post:
-                posts_data.append(current_post)
-            
-            return {
-                'all_urls': image_urls,
-                'by_post': posts_data,
-                'total': len(image_urls),
-                'total_posts': len(posts_data) if posts_data else 0
-            }
-            
-    except FileNotFoundError:
-        return {'all_urls': [], 'by_post': [], 'total': 0, 'error': 'File not found'}
-    except Exception as e:
-        return {'all_urls': [], 'by_post': [], 'total': 0, 'error': str(e)}
-
-@app.route('/')
-def home():
+        with open('test.txt', 'w') as f:
+            f.write('test')
+        test_results['current_dir'] = os.path.exists('test.txt')
+        if os.path.exists('test.txt'):
+            os.remove('test.txt')
+    except:
+        test_results['current_dir'] = False
+    
+    # Test 2: Write to /tmp
+    try:
+        tmp_file = '/tmp/test.txt'
+        with open(tmp_file, 'w') as f:
+            f.write('test')
+        test_results['tmp_dir'] = os.path.exists(tmp_file)
+        if os.path.exists(tmp_file):
+            os.remove(tmp_file)
+    except:
+        test_results['tmp_dir'] = False
+    
+    # Test 3: Use tempfile
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
+            f.write('test')
+            temp_name = f.name
+        test_results['tempfile'] = os.path.exists(temp_name)
+        if os.path.exists(temp_name):
+            os.remove(temp_name)
+    except:
+        test_results['tempfile'] = False
+    
     return jsonify({
-        "status": "online",
-        "service": "Spydox Instagram Extractor API",
-        "endpoints": {
-            "/extract/<username>": "GET - Extract Instagram posts and get image URLs",
-            "/extract": "POST - Extract Instagram posts (JSON with username)",
-            "/download/<username>": "GET - Download extracted URLs as file",
-            "/urls-only/<username>": "GET - Get only image URLs",
-            "/health": "GET - Health check"
-        }
+        "environment": "Vercel" if os.environ.get('VERCEL') else "Local",
+        "current_dir": os.getcwd(),
+        "writable_tests": test_results,
+        "temp_dir": tempfile.gettempdir()
     })
-
-@app.route('/health', methods=['GET'])
-def health():
-    return jsonify({"status": "healthy", "time": time.time()})
 
 @app.route('/extract/<username>', methods=['GET'])
 def extract(username):
@@ -177,8 +183,8 @@ def extract_post():
     return jsonify(result)
 
 @app.route('/urls-only/<username>', methods=['GET'])
-def get_urls_only(username):
-    """Get only the image URLs without additional data"""
+def urls_only(username):
+    """Get only the image URLs"""
     username = username.replace('@', '').strip()
     result = run_spydox_extractor(username)
     
@@ -186,7 +192,7 @@ def get_urls_only(username):
         return jsonify({
             "success": True,
             "username": username,
-            "urls": result.get('image_urls', {}).get('all_urls', []),
+            "urls": result.get('image_urls', []),
             "count": result.get('total_images', 0)
         })
     else:
@@ -194,32 +200,21 @@ def get_urls_only(username):
 
 @app.route('/download/<username>', methods=['GET'])
 def download(username):
-    """Download extracted URLs as file"""
+    """Download URLs as file"""
     username = username.replace('@', '').strip()
     result = run_spydox_extractor(username)
     
     if result.get('success'):
-        urls_data = result.get('image_urls', {})
-        all_urls = urls_data.get('all_urls', [])
+        urls = result.get('image_urls', [])
         
         # Create formatted output
         output = f"Instagram Image URLs for @{username}\n"
-        output += "=" * 80 + "\n\n"
-        output += f"Total Images Found: {len(all_urls)}\n"
-        output += f"Total Posts: {urls_data.get('total_posts', 0)}\n"
-        output += "=" * 80 + "\n\n"
+        output += "=" * 60 + "\n"
+        output += f"Total Images: {len(urls)}\n"
+        output += "=" * 60 + "\n\n"
         
-        # Add URLs by post if available
-        if urls_data.get('by_post'):
-            for i, post in enumerate(urls_data['by_post'], 1):
-                output += f"Post {i}: {post.get('post_id', 'Unknown')}\n"
-                for j, url in enumerate(post.get('images', []), 1):
-                    output += f"  Image {j}: {url}\n"
-                output += "\n"
-        else:
-            # Just list all URLs
-            for i, url in enumerate(all_urls, 1):
-                output += f"{i}. {url}\n"
+        for i, url in enumerate(urls, 1):
+            output += f"{i}. {url}\n"
         
         file_obj = io.BytesIO()
         file_obj.write(output.encode('utf-8'))
@@ -234,27 +229,13 @@ def download(username):
     else:
         return jsonify(result)
 
-@app.route('/urls-json/<username>', methods=['GET'])
-def urls_json(username):
-    """Get URLs in clean JSON format"""
-    username = username.replace('@', '').strip()
-    result = run_spydox_extractor(username)
-    
-    if result.get('success'):
-        return jsonify({
-            "success": True,
-            "username": username,
-            "data": {
-                "urls": result.get('image_urls', {}).get('all_urls', []),
-                "posts": result.get('image_urls', {}).get('by_post', [])
-            },
-            "stats": {
-                "total_images": result.get('total_images', 0),
-                "total_posts": result.get('image_urls', {}).get('total_posts', 0)
-            }
-        })
-    else:
-        return jsonify(result)
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({
+        "status": "healthy", 
+        "time": __import__('time').time(),
+        "environment": "Vercel" if os.environ.get('VERCEL') else "Local"
+    })
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
