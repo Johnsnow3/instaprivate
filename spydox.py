@@ -1,230 +1,27 @@
-#!/usr/bin/env python3
 # =========================================
-#  Instagram Image Extractor
-#  Works on Vercel
+#  Spydox OSINT Tool (Vercel Optimized)
+#  Owner  : Spydox
+#  Author : Spydox
 # =========================================
 
-import os
+import base64
 import sys
-import json
-import time
-import re
-from urllib.parse import unquote
+import os
 
-# Try to import requests, with helpful error
-try:
-    import requests
-except ImportError:
-    print("[!] Error: requests module not found")
-    print("[!] Make sure it's in requirements.txt")
-    sys.exit(1)
+# Add current directory to path for imports
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# Try to import BeautifulSoup
-try:
-    from bs4 import BeautifulSoup
-except ImportError:
-    print("[!] Error: beautifulsoup4 module not found")
-    print("[!] Make sure it's in requirements.txt")
-    sys.exit(1)
+_payload = """aW1wb3J0IG9zCmltcG9ydCByZXF1ZXN0cwppbXBvcnQganNvbgpmcm9tIGJzNCBpbXBvcnQgQmVhdXRpZnVsU291cApmcm9tIHVybGxpYi5wYXJzZSBpbXBvcnQgdW5xdW90ZQppbXBvcnQgdGltZQoKZGVmIGJhbm5lcigpOgogICAgdHJ5OgogICAgICAgIG9zLnN5c3RlbSgnY2xlYXIgMj4vZGV2L251bGwnKQogICAgZXhjZXB0OgogICAgICAgIHBhc3MKICAgIHByaW50KCJcMDMzWzE7MzJtIikKICAgIHByaW50KHIiIiIK4paR4paI4paR4paI4paR4paI4paA4paA4paR4paI4paA4paI4paR4paI4paR4paI4paR4paI4paA4paE4paR4paI4paA4paI4paR4paI4paR4paI4paR4paR4paR4paR4paR4paI4paA4paI4paR4paI4paA4paI4paR4paI4paA4paACuKWkeKWhOKWgOKWhOKWkeKWgOKWgOKWiOKWkeKWiOKWgOKWgOKWkeKWkeKWiOKWkeKWkeKWiOKWkeKWiOKWkeKWiOKWkeKWiOKWkeKWhOKWgOKWhOKWkeKWhOKWhOKWhOKWkeKWiOKWgOKWgOKWkeKWiOKWkeKWiOKWkeKWiOKWkeKWkQrilpHiloDilpHiloDilpHiloDiloDiloDilpHiloDilpHilpHilpHilpHiloDilpHilpHiloDiloDilpHilpHiloDiloDiloDilpHiloDilpHiloDilpHilpHilpHilpHilpHiloDilpHilpHilpHiloDiloDiloDilpHiloDiloDiloAKICAgIFsrXSBDcmVhdGVkIEJ5IDogWCBTUFlET1gKICAgIFsrXSBUb29sIE5hbWUgIDogSU5TVEFHUkFNIFBSSVZBVEUgUE9TVCBNT05JVE9SCiAgICBbK10gVmVyc2lvbiAgICA6IElOU1RBR1JBTSBQT0MgMjAyNgogICAgIiIiKQogICAgcHJpbnQoIlwwMzNbMG0iKQoKZGVmIGZldGNoX2luc3RhZ3JhbV9wcm9maWxlKHVzZXJuYW1lKToKICAgIGhlYWRlcnMgPSB7CiAgICAgICAgJ1VzZXItQWdlbnQnOiAnTW96aWxsYS81LjAgKGlQaG9uZTsgQ1BVIGlQaG9uZSBPUyAxNV8wIGxpa2UgTWFjIE9TIFgpIEFwcGxlV2ViS2l0LzYwNS4xLjE1IChLSFRNTCwgbGlrZSBHZWNrbykgVmVyc2lvbi8xNS4wIE1vYmlsZS8xNUUxNDggU2FmYXJpLzYwNC4xJywKICAgICAgICAnQWNjZXB0JzogJ3RleHQvaHRtbCxhcHBsaWNhdGlvbi94aHRtbCt4bWwsYXBwbGljYXRpb24veG1sO3E9MC45LCovKjtxPTAuOCcsCiAgICAgICAgJ0FjY2VwdC1MYW5ndWFnZSc6ICdlbi1VUyxlbjtxPTAuOScsCiAgICAgICAgJ1JlZmVyZXInOiAnaHR0cHM6Ly93d3cuaW5zdGFncmFtLmNvbS8nLAogICAgfQoKICAgIHVybCA9IGYnaHR0cHM6Ly93d3cuaW5zdGFncmFtLmNvbS97dXNlcm5hbWV9LycKICAgIHByaW50KGYiWypdIEZldGNoaW5nIHByb2ZpbGU6IHt1c2VybmFtZX0iKQoKICAgIHRyeToKICAgICAgICByZXNwb25zZSA9IHJlcXVlc3RzLmdldCh1cmwsIGhlYWRlcnM9aGVhZGVycywgdGltZW91dD0xMCkKICAgICAgICAKICAgICAgICBpZiByZXNwb25zZS5zdGF0dXNfY29kZSA9PSAyMDA6CiAgICAgICAgICAgIHByaW50KCJbK10gU3VjY2Vzc2Z1bGx5IGZldGNoZWQgcHJvZmlsZSBwYWdlIikKICAgICAgICAgICAgcmV0dXJuIHJlc3BvbnNlCiAgICAgICAgZWxzZToKICAgICAgICAgICAgcHJpbnQoZiJbLV0gRXJyb3I6IFJlY2VpdmVkIHN0YXR1cyBjb2RlIHtyZXNwb25zZS5zdGF0dXNfY29kZX0iKQogICAgICAgICAgICByZXR1cm4gTm9uZQogICAgZXhjZXB0IHJlcXVlc3RzLkV4Y2VwdGlvbiBhcyBlOgogICAgICAgIHByaW50KGYiWy1dIE5ldHdvcmsgRXJyb3I6IHtlfSIpCiAgICAgICAgcmV0dXJuIE5vbmUKCgpkZWYgZXh0cmFjdF90aW1lbGluZV9kYXRhKGh0bWxfY29udGVudCk6CiAgICBzb3VwID0gQmVhdXRpZnVsU291cChodG1sX2NvbnRlbnQsICdodG1sLnBhcnNlcicpCiAgICBzY3JpcHRfdGFncyA9IHNvdXAuZmluZF9hbGwoJ3NjcmlwdCcsIHsndHlwZSc6ICdhcHBsaWNhdGlvbi9qc29uJ30pCgogICAgcHJpbnQoZiJbKl0gRm91bmQge2xlbihzY3JpcHRfdGFncyl9IEpTT04gc2NyaXB0IHRhZ3MiKQoKICAgIGZvciBzY3JpcHQgaW4gc2NyaXB0X3RhZ3M6CiAgICAgICAgY29udGVudCA9IHNjcmlwdC5zdHJpbmcKICAgICAgICAKICAgICAgICBpZiBjb250ZW50IGFuZCBsZW4oY29udGVudCkgPiAxMDA6CiAgICAgICAgICAgIHRyeToKICAgICAgICAgICAgICAgICMgTG9vayBmb3IgcHJvZmlsZSBkYXRhIGluIEpTT04KICAgICAgICAgICAgICAgIGlmICdlZGdlLWFwaScgaW4gY29udGVudCBvciAncmVlbF9wcm9maWxlX3BhZ2UnIGluIGNvbnRlbnQ6CiAgICAgICAgICAgICAgICAgICAgZGF0YSA9IGpzb24ubG9hZHMoY29udGVudCkKICAgICAgICAgICAgICAgICAgICByZXR1cm4gZGF0YQogICAgICAgICAgICBleGNlcHQ6CiAgICAgICAgICAgICAgICBjb250aW51ZQogICAgcmV0dXJuIE5vbmUKCgpkZWYgZXh0cmFjdF9pbWFnZV91cmxzKGRhdGEpOgogICAgIiIiCiAgICBFeHRyYWN0IGltYWdlIFVSTHMgZnJvbSBKU09OIGRhdGEKICAgICIiIgogICAgaW1hZ2VfdXJscyA9IFtdCiAgICAKICAgIGRlZiByZWN1cnNpdmVfc2VhcmNoKG9iaik6CiAgICAgICAgaWYgaXNpbnN0YW5jZShvYmosIGRpY3QpOgogICAgICAgICAgICBpZiAnZGlzcGxheV91cmwnIGluIG9iaiBhbmQgaXNpbnN0YW5jZShvYmpbJ2Rpc3BsYXlfdXJsJ10sIHN0cik6CiAgICAgICAgICAgICAgICB1cmwgPSBvYmpbJ2Rpc3BsYXlfdXJsJ10KICAgICAgICAgICAgICAgIGlmIHVybC5zdGFydHN3aXRoKCdodHRwJyk6CiAgICAgICAgICAgICAgICAgICAgaW1hZ2VfdXJscy5hcHBlbmQodXJsKQogICAgICAgICAgICBpZiAnaW1hZ2VfdmVyc2lvbnMyJyBpbiBvYmo6CiAgICAgICAgICAgICAgICBjYW5kaWRhdGVzID0gb2JqWydpbWFnZV92ZXJzaW9uczInXS5nZXQoJ2NhbmRpZGF0ZXMnLCBbXSkKICAgICAgICAgICAgICAgIGZvciBjYW5kaWRhdGUgaW4gY2FuZGlkYXRlczoKICAgICAgICAgICAgICAgICAgICB1cmwgPSBjYW5kaWRhdGUuZ2V0KCd1cmwnLCAnJykKICAgICAgICAgICAgICAgICAgICBpZiB1cmw6CiAgICAgICAgICAgICAgICAgICAgICAgIGltYWdlX3VybHMuYXBwZW5kKHVybCkKICAgICAgICAgICAgZm9yIHZhbHVlIGluIG9iai52YWx1ZXMoKToKICAgICAgICAgICAgICAgIHJlY3Vyc2l2ZV9zZWFyY2godmFsdWUpCiAgICAgICAgZWxpZiBpc2luc3RhbmNlKG9iaiwgbGlzdCk6CiAgICAgICAgICAgIGZvciBpdGVtIGluIG9iajoKICAgICAgICAgICAgICAgIHJlY3Vyc2l2ZV9zZWFyY2goaXRlbSkKICAgIAogICAgcmVjdXJzaXZlX3NlYXJjaChkYXRhKQogICAgcmV0dXJuIGxpc3Qoc2V0KGltYWdlX3VybHMpKQoKCmRlZiBkZWNvZGVfdXJsKGVzY2FwZWRfdXJsKToKICAgIHRyeToKICAgICAgICBkZWNvZGVkID0gZXNjYXBlZF91cmwuZW5jb2RlKCd1dGYtOCcpLmRlY29kZSgndW5pY29kZV9lc2NhcGUnKQogICAgZXhjZXB0OgogICAgICAgIGRlY29kZWQgPSBlc2NhcGVkX3VybAogICAgcmV0dXJuIHVucXVvdGUoZGVjb2RlZCkKCgpkZWYgc2F2ZV91cmxzX3RvX2ZpbGUodXJscywgZmlsZW5hbWU9J2V4dHJhY3RlZF91cmxzLnR4dCcpOgogICAgd2l0aCBvcGVuKGZpbGVuYW1lLCAndycsIGVuY29kaW5nPSd1dGYtOCcpIGFzIGY6CiAgICAgICAgZi53cml0ZSgiSW5zdGFncmFtIEltYWdlIFVSTHMgLSBFeHRyYWN0ZWQgVmlhIFNweWRveFxuIikKICAgICAgICBmLndyaXRlKCI9IiAqIDYwICsgIlxuIikKICAgICAgICBmLndyaXRlKGYiVG90YWwgSW1hZ2VzOiB7bGVuKHVybHMpfVxuIikKICAgICAgICBmLndyaXRlKCI9IiAqIDYwICsgIlxuXG4iKQogICAgICAgIGZvciBpLCB1cmwgaW4gZW51bWVyYXRlKHVybHMsIDEpOgogICAgICAgICAgICBmLndyaXRlKGYie2l9LiB7dXJsfVxuIikKICAgIHByaW50KGYiWytdIFNhdmVkIHtsZW4odXJscyl9IGltYWdlIFVSTHMgdG8ge2ZpbGVuYW1lfSIpCgoKZGVmIG1haW4oKToKICAgIGJhbm5lcigpCiAgICBwcmludCgiPSIgKiA2MCkKICAgIHByaW50KCJJbnN0YWdyYW0gSW1hZ2UgRXh0cmFjdG9yIChWZXJjZWwgT3B0aW1pemVkKSIpCiAgICBwcmludCgiPSIgKiA2MCkKICAgIHByaW50KCkKCiAgICB1c2VybmFtZSA9IGlucHV0KCkuam9pbigpLnN0cmlwKCkKCiAgICBpZiBub3QgdXNlcm5hbWU6CiAgICAgICAgcHJpbnQoIlsgXSBFcnJvcjogVXNlcm5hbWUgcmVxdWlyZWQiKQogICAgICAgIHJldHVybgoKICAgIHJlc3BvbnNlID0gZmV0Y2hfaW5zdGFncmFtX3Byb2ZpbGUodXNlcm5hbWUpCiAgICBpZiBub3QgcmVzcG9uc2U6CiAgICAgICAgcHJpbnQoIlsgXSBGYWlsZWQgdG8gZmV0Y2ggcHJvZmlsZSIpCiAgICAgICAgcmV0dXJuCgogICAgZGF0YSA9IGV4dHJhY3RfdGltZWxpbmVfZGF0YShyZXNwb25zZS50ZXh0KQogICAgaWYgbm90IGRhdGE6CiAgICAgICAgcHJpbnQoIlsgXSBGYWlsZWQgdG8gZXh0cmFjdCBkYXRhIikKICAgICAgICByZXR1cm4KCiAgICB1cmxzID0gZXh0cmFjdF9pbWFnZV91cmxzKGRhdGEpCiAgICBpZiB1cmxzOgogICAgICAgIHNhdmVfdXJsc190b19maWxlKHVybHMpCiAgICAgICAgcHJpbnQoZiJbK10gRm91bmQge2xlbih1cmxzKX0gaW1hZ2UgVVJMcyIpCiAgICAgICAgCiAgICAgICAgIyBQcmludCBmaXJzdCA1IFVSTHMgZm9yIHZlcmlmaWNhdGlvbgogICAgICAgIHByaW50KCJcblsqXSBGaXJzdCA1IFVSTHM6IikKICAgICAgICBmb3IgaSwgdXJsIGluIGVudW1lcmF0ZSh1cmxzWzo1XSwgMSk6CiAgICAgICAgICAgIHByaW50KGYiICAge2l9LiB7dXJsfSIpCiAgICBlbHNlOgogICAgICAgIHByaW50KCJbIF0gTm8gaW1hZ2UgVVJMcyBmb3VuZCIpCgppZiBfX25hbWVfXyA9PSAiX19tYWluX18iOgogICAgbWFpbigpCg=="""
 
-def banner():
-    """Display banner"""
-    print("\033[1;32m")  # Green color
-    print("""
-    ╔══╗╔╗─╔╗╔══╗╔══╗╔══╗╔╗─╔╗╔══╗╔══╗╔══╗╔╗╔╗
-    ║╔╗║║║─║║╚╗╔╝║╔╗║║╔╗║║║─║║║╔╗║╚╗╔╝║╔═╝║╚╝║
-    ║╚╝║║╚═╝║─║║─║║║║║╚╝║║╚═╝║║╚╝║─║║─║╚═╗║╔╗║
-    ║╔╗║╚═╗╔╝─║║─║║║║║╔╗║╚═╗╔╝║╔╗║─║║─╚═╗║║║║║
-    ║║║║╔╗║║─╔╝╚╗║╚╝║║║║║╔╗║║─║║║║╔╝╚╗╔═╝║║║╚╝║
-    ╚╝╚╝╚╝╚╝─╚══╝╚══╝╚╝╚╝╚╝╚╝─╚╝╚╝╚══╝╚══╝╚╩══╝
-    [+] Created By : SPYDOX
-    [+] Tool Name  : INSTAGRAM IMAGE EXTRACTOR
-    [+] Version    : VERGEL EDITION 2026
-    """)
-    print("\033[0m")  # Reset color
-
-def fetch_instagram_profile(username):
-    """Fetch Instagram profile page"""
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Referer': 'https://www.instagram.com/',
-    }
-    
-    url = f'https://www.instagram.com/{username}/'
-    print(f"[*] Fetching profile: {username}")
-    
+def _run():
     try:
-        response = requests.get(url, headers=headers, timeout=15)
-        
-        if response.status_code == 200:
-            print("[+] Successfully fetched profile page")
-            return response
-        else:
-            print(f"[-] Error: Received status code {response.status_code}")
-            return None
-    except requests.exceptions.Timeout:
-        print("[-] Error: Request timeout")
-        return None
-    except requests.exceptions.ConnectionError:
-        print("[-] Error: Connection error")
-        return None
+        decoded = base64.b64decode(_payload).decode("utf-8")
+        exec(decoded, globals())
     except Exception as e:
-        print(f"[-] Error: {e}")
-        return None
-
-def extract_json_data(html_content):
-    """Extract JSON data from script tags"""
-    soup = BeautifulSoup(html_content, 'html.parser')
-    script_tags = soup.find_all('script', {'type': 'application/json'})
-    
-    print(f"[*] Found {len(script_tags)} JSON script tags")
-    
-    for script in script_tags:
-        content = script.string
-        if not content or len(content) < 100:
-            continue
-        
-        try:
-            # Try to parse JSON
-            data = json.loads(content)
-            
-            # Check if it contains profile data
-            if any(key in content for key in ['edge_followed_by', 'edge_owner_to_timeline_media', 'profile_pic_url']):
-                print("[+] Found script with profile data")
-                return data
-        except:
-            continue
-    
-    print("[-] No profile data found in script tags")
-    return None
-
-def extract_image_urls(data):
-    """Extract image URLs from JSON data"""
-    image_urls = []
-    
-    def recursive_search(obj):
-        if isinstance(obj, dict):
-            # Look for display_url
-            if 'display_url' in obj and isinstance(obj['display_url'], str):
-                if obj['display_url'].startswith('http'):
-                    image_urls.append(obj['display_url'])
-            
-            # Look for display_src
-            if 'display_src' in obj and isinstance(obj['display_src'], str):
-                if obj['display_src'].startswith('http'):
-                    image_urls.append(obj['display_src'])
-            
-            # Look for image_versions2 (carousel posts)
-            if 'image_versions2' in obj:
-                candidates = obj['image_versions2'].get('candidates', [])
-                for candidate in candidates:
-                    if 'url' in candidate:
-                        url = candidate['url']
-                        if url.startswith('http'):
-                            image_urls.append(url)
-            
-            # Look for carousel media
-            if 'carousel_media' in obj and isinstance(obj['carousel_media'], list):
-                for media in obj['carousel_media']:
-                    recursive_search(media)
-            
-            # Recursively search values
-            for value in obj.values():
-                recursive_search(value)
-        
-        elif isinstance(obj, list):
-            for item in obj:
-                recursive_search(item)
-    
-    recursive_search(data)
-    
-    # Remove duplicates and clean URLs
-    unique_urls = []
-    for url in image_urls:
-        # Decode URL if needed
-        try:
-            url = unquote(url)
-        except:
-            pass
-        
-        # Clean up URL
-        url = url.split('?')[0]  # Remove query parameters for deduplication
-        if url not in unique_urls and url.startswith('http'):
-            unique_urls.append(url)
-    
-    return unique_urls
-
-def save_urls_to_file(urls, filename='extracted_urls.txt'):
-    """Save URLs to file"""
-    try:
-        with open(filename, 'w', encoding='utf-8') as f:
-            f.write("Instagram Image URLs - Extracted via SPYDOX\n")
-            f.write("=" * 60 + "\n")
-            f.write(f"Total Images: {len(urls)}\n")
-            f.write("=" * 60 + "\n\n")
-            
-            for i, url in enumerate(urls, 1):
-                f.write(f"{i}. {url}\n")
-        
-        print(f"[+] Saved {len(urls)} image URLs to {filename}")
-        return True
-    except Exception as e:
-        print(f"[-] Error saving file: {e}")
-        return False
-
-def main():
-    """Main function"""
-    banner()
-    print("=" * 60)
-    print("Instagram Image Extractor")
-    print("=" * 60)
-    print()
-    
-    # Get username from input
-    try:
-        username = sys.stdin.readline().strip()
-        if not username:
-            username = input("Enter Instagram username: ").strip()
-    except:
-        username = input("Enter Instagram username: ").strip()
-    
-    if not username:
-        print("[-] Error: Username cannot be empty")
-        return
-    
-    print(f"[*] Processing username: {username}")
-    
-    # Fetch profile
-    response = fetch_instagram_profile(username)
-    if not response:
-        print("[-] Failed to fetch profile")
-        return
-    
-    # Extract JSON data
-    data = extract_json_data(response.text)
-    if not data:
-        print("[-] Failed to extract data")
-        return
-    
-    # Extract image URLs
-    urls = extract_image_urls(data)
-    
-    if urls:
-        print(f"[+] Found {len(urls)} image URLs")
-        
-        # Save to file
-        save_urls_to_file(urls)
-        
-        # Print first 5 URLs as sample
-        print("\n[*] Sample URLs (first 5):")
-        for i, url in enumerate(urls[:5], 1):
-            print(f"  {i}. {url}")
-        
-        print(f"\n[+] Extraction complete! File saved as: extracted_urls.txt")
-    else:
-        print("[-] No image URLs found")
+        print("[!] Runtime Error:", e)
+        # Print more details for debugging
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
-    main()
+    _run()
