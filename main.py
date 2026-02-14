@@ -5,7 +5,6 @@ import sys
 import re
 import tempfile
 import time
-import requests
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import io
@@ -14,56 +13,17 @@ import shutil
 app = Flask(__name__)
 CORS(app)
 
-# Telegram Configuration
-TELEGRAM_BOT_TOKEN = "YOUR_BOT_TOKEN"  # Get from @BotFather
-TELEGRAM_CHAT_ID = "YOUR_CHAT_ID"      # Your Telegram chat ID
-
-def send_to_telegram(username, urls, file_content=None):
-    """Send results to Telegram"""
-    try:
-        # Send text message
-        message = f"✅ Instagram Extraction Complete for @{username}\n"
-        message += f"📸 Total Images: {len(urls)}\n"
-        message += f"🔗 First 5 URLs:\n"
-        
-        for i, url in enumerate(urls[:5], 1):
-            message += f"{i}. {url[:50]}...\n"
-        
-        # Send message
-        msg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        msg_data = {
-            'chat_id': TELEGRAM_CHAT_ID,
-            'text': message,
-            'parse_mode': 'HTML'
-        }
-        requests.post(msg_url, json=msg_data)
-        
-        # Send file if exists
-        if file_content:
-            file_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
-            files = {
-                'document': (f'instagram_{username}_urls.txt', file_content.encode('utf-8'), 'text/plain')
-            }
-            data = {'chat_id': TELEGRAM_CHAT_ID}
-            requests.post(file_url, files=files, data=data)
-        
-        return True
-    except Exception as e:
-        print(f"Telegram error: {e}")
-        return False
-
 def run_spydox_extractor(username):
-    """Run spydox.py and capture results"""
+    """Run spydox.py and capture the generated file"""
     try:
         # Create working directory in /tmp
         work_dir = os.path.join('/tmp', f'spydox_{int(time.time())}')
         os.makedirs(work_dir, exist_ok=True)
         
-        # Copy the new spydox.py to working directory
+        # Copy spydox.py to working directory
         spydox_source = os.path.join(os.getcwd(), 'spydox.py')
         spydox_dest = os.path.join(work_dir, 'spydox.py')
         
-        # Read the new spydox.py (make sure it's the one I provided above)
         with open(spydox_source, 'r') as f:
             spydox_content = f.read()
         
@@ -74,10 +34,9 @@ def run_spydox_extractor(username):
         original_dir = os.getcwd()
         os.chdir(work_dir)
         
-        # Set environment
+        # Set environment to find installed packages
         env = os.environ.copy()
         env['PYTHONPATH'] = '/var/task:/var/task/vendor:/tmp'
-        env['PYTHONUNBUFFERED'] = '1'
         
         # Run spydox.py
         process = subprocess.Popen(
@@ -89,52 +48,43 @@ def run_spydox_extractor(username):
             env=env
         )
         
-        # Send username
+        # Send username and wait
         stdout, stderr = process.communicate(input=username + '\n', timeout=60)
         console_output = stdout + stderr
         
         # Look for generated file
         image_urls = []
         extracted_file = os.path.join(work_dir, 'extracted_urls.txt')
-        file_content = None
         
         if os.path.exists(extracted_file):
             with open(extracted_file, 'r', encoding='utf-8') as f:
-                file_content = f.read()
+                content = f.read()
                 
-                # Extract URLs using multiple patterns
-                patterns = [
-                    r'https?://[^\s]+\.(?:jpg|jpeg|png|gif|webp)[^\s]*',
-                    r'https?://[^\s]+fbcdn[^\s]+',
-                    r'https?://[^\s]+cdninstagram[^\s]+',
-                    r'\d+\.\s*(https?://[^\s]+)'
-                ]
+                # Extract URLs using regex
+                urls = re.findall(r'https?://[^\s]+\.(?:jpg|jpeg|png|gif|webp)[^\s]*', content)
+                if not urls:
+                    urls = re.findall(r'URL:\s*(https?://[^\s]+)', content)
+                if not urls:
+                    urls = re.findall(r'https?://[^\s]+fbcdn[^\s]+', content)
                 
-                for pattern in patterns:
-                    urls = re.findall(pattern, file_content)
-                    for url in urls:
-                        if isinstance(url, tuple):
-                            url = url[0]
-                        url = str(url).strip()
-                        url = re.sub(r'[,\s"\']+$', '', url)
-                        if url.startswith('http') and url not in image_urls:
-                            image_urls.append(url)
-        
-        # If no URLs from file, try console
-        if not image_urls:
-            for pattern in [r'https?://[^\s]+\.(?:jpg|jpeg|png)', r'https?://[^\s]+fbcdn[^\s]+']:
-                urls = re.findall(pattern, console_output)
+                # Clean URLs
                 for url in urls:
+                    if isinstance(url, tuple):
+                        url = url[0]
+                    url = str(url).strip()
+                    url = re.sub(r'[,\s"\']+$', '', url)
                     if url.startswith('http') and url not in image_urls:
                         image_urls.append(url)
         
+        # If no file, try to extract from console
+        if not image_urls:
+            urls = re.findall(r'https?://[^\s]+\.(?:jpg|jpeg|png|gif|webp)[^\s]*', console_output)
+            for url in urls:
+                if url.startswith('http') and url not in image_urls:
+                    image_urls.append(url)
+        
         # Go back
         os.chdir(original_dir)
-        
-        # Send to Telegram
-        telegram_sent = False
-        if image_urls:
-            telegram_sent = send_to_telegram(username, image_urls, file_content)
         
         # Clean up
         try:
@@ -148,16 +98,14 @@ def run_spydox_extractor(username):
                 "username": username,
                 "image_urls": image_urls,
                 "total_images": len(image_urls),
-                "telegram_sent": telegram_sent,
-                "message": f"✅ Found {len(image_urls)} images. Check Telegram!" if telegram_sent else f"✅ Found {len(image_urls)} images"
+                "console_output": console_output[:500] + "..." if len(console_output) > 500 else console_output
             }
         else:
             return {
                 "success": False,
                 "error": "No image URLs found",
                 "username": username,
-                "console_output": console_output[:500],
-                "telegram_sent": telegram_sent
+                "console_output": console_output
             }
             
     except subprocess.TimeoutExpired:
@@ -169,10 +117,11 @@ def run_spydox_extractor(username):
 def home():
     return jsonify({
         "status": "online",
-        "service": "Instagram Image Extractor with Telegram",
+        "service": "Instagram Image Extractor",
         "endpoints": {
-            "/extract/<username>": "GET - Extract and send to Telegram",
-            "/test/<username>": "GET - Test extraction",
+            "/extract/<username>": "GET - Extract images",
+            "/urls-only/<username>": "GET - Get only URLs",
+            "/download/<username>": "GET - Download as file",
             "/health": "GET - Health check"
         }
     })
@@ -183,40 +132,56 @@ def extract(username):
     result = run_spydox_extractor(username)
     return jsonify(result)
 
-@app.route('/test/<username>', methods=['GET'])
-def test(username):
-    """Test endpoint to check setup"""
+@app.route('/urls-only/<username>', methods=['GET'])
+def urls_only(username):
     username = username.replace('@', '').strip()
+    result = run_spydox_extractor(username)
     
-    # Test if spydox.py exists
-    spydox_exists = os.path.exists('spydox.py')
+    if result.get('success'):
+        return jsonify({
+            "success": True,
+            "username": username,
+            "urls": result.get('image_urls', []),
+            "count": result.get('total_images', 0)
+        })
+    else:
+        return jsonify(result)
+
+@app.route('/download/<username>', methods=['GET'])
+def download(username):
+    username = username.replace('@', '').strip()
+    result = run_spydox_extractor(username)
     
-    # Test file write in /tmp
-    test_file = '/tmp/test.txt'
-    try:
-        with open(test_file, 'w') as f:
-            f.write('test')
-        tmp_write = os.path.exists(test_file)
-        if tmp_write:
-            os.remove(test_file)
-    except:
-        tmp_write = False
-    
-    return jsonify({
-        "username": username,
-        "spydox_exists": spydox_exists,
-        "tmp_writable": tmp_write,
-        "python_version": sys.version,
-        "cwd": os.getcwd(),
-        "files": os.listdir('.')[:10]  # First 10 files
-    })
+    if result.get('success'):
+        urls = result.get('image_urls', [])
+        
+        output = f"Instagram Images for @{username}\n"
+        output += "=" * 60 + "\n"
+        output += f"Total Images: {len(urls)}\n"
+        output += "=" * 60 + "\n\n"
+        
+        for i, url in enumerate(urls, 1):
+            output += f"{i}. {url}\n"
+        
+        file_obj = io.BytesIO()
+        file_obj.write(output.encode('utf-8'))
+        file_obj.seek(0)
+        
+        return send_file(
+            file_obj,
+            as_attachment=True,
+            download_name=f"instagram_{username}_images.txt",
+            mimetype='text/plain'
+        )
+    else:
+        return jsonify(result)
 
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({
         "status": "healthy",
         "time": time.time(),
-        "telegram_configured": TELEGRAM_BOT_TOKEN != "YOUR_BOT_TOKEN"
+        "python_version": sys.version
     })
 
 if __name__ == '__main__':
