@@ -12,16 +12,39 @@ app = Flask(__name__)
 CORS(app)
 
 def run_spydox_extractor(username):
-    """Run the spydox extractor and capture output directly"""
+    """Run the spydox extractor with fallback methods"""
     try:
-        # Create a temporary directory in /tmp (writable on Vercel)
+        # Try multiple methods to get images
+        
+        # Method 1: Run the original spydox.py
+        result = method1_original_spydox(username)
+        if result.get('success') and result.get('image_urls'):
+            return result
+            
+        # Method 2: Try direct Instagram scraping
+        result = method2_direct_scrape(username)
+        if result.get('success') and result.get('image_urls'):
+            return result
+            
+        # Method 3: Return error with suggestions
+        return {
+            "success": False,
+            "error": "Could not extract images. Instagram may have changed their structure.",
+            "username": username,
+            "suggestion": "Try using instagram-scraper or instaloader library instead",
+            "console_output": result.get('console_output', 'No output')
+        }
+            
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+def method1_original_spydox(username):
+    """Try the original spydox method"""
+    try:
         temp_dir = tempfile.mkdtemp()
         original_dir = os.getcwd()
-        
-        # Change to temp directory to isolate file writes
         os.chdir(temp_dir)
         
-        # Run the spydox script with username as input
         process = subprocess.Popen(
             [sys.executable, os.path.join(original_dir, 'spydox.py')],
             stdin=subprocess.PIPE,
@@ -30,141 +53,93 @@ def run_spydox_extractor(username):
             text=True
         )
         
-        # Send username as input
-        stdout, stderr = process.communicate(input=username + '\n', timeout=60)
-        
-        # Capture console output
+        stdout, stderr = process.communicate(input=username + '\n', timeout=30)
         console_output = stdout + stderr
         
-        # Check if extracted_urls.txt was created in temp directory
-        extracted_file = os.path.join(temp_dir, 'extracted_urls.txt')
+        # Check for file
         image_urls = []
+        extracted_file = os.path.join(temp_dir, 'extracted_urls.txt')
         
         if os.path.exists(extracted_file):
-            # Read the file content
-            with open(extracted_file, 'r', encoding='utf-8') as f:
-                file_content = f.read()
-            
-            # Extract URLs from file content
-            image_urls = extract_urls_from_text(file_content)
-            
-            # Also try to extract from console output as backup
-            if not image_urls:
-                image_urls = extract_urls_from_text(console_output)
-            
-            # Clean up
+            with open(extracted_file, 'r') as f:
+                content = f.read()
+                image_urls = extract_urls_from_text(content)
             os.remove(extracted_file)
         
-        # If no URLs found in file, try console output
-        if not image_urls:
-            image_urls = extract_urls_from_text(console_output)
-        
-        # Change back to original directory
         os.chdir(original_dir)
         
-        # Clean up temp directory
-        try:
-            os.rmdir(temp_dir)
-        except:
-            pass
-        
         return {
-            "success": True,
+            "success": len(image_urls) > 0,
             "username": username,
-            "console_output": console_output[:1000] + "..." if len(console_output) > 1000 else console_output,
             "image_urls": image_urls,
             "total_images": len(image_urls),
-            "file_generated": os.path.exists(extracted_file) if 'extracted_file' in locals() else False,
-            "method": "direct_extraction"
+            "console_output": console_output[:500],
+            "method": "original_spydox"
         }
-            
-    except subprocess.TimeoutExpired:
-        return {"success": False, "error": "Extraction timeout"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+def method2_direct_scrape(username):
+    """Alternative method using requests directly"""
+    import requests
+    from bs4 import BeautifulSoup
+    
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        
+        url = f'https://www.instagram.com/{username}/'
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        # Extract from response text
+        image_urls = extract_urls_from_text(response.text)
+        
+        # Also look for JSON data
+        soup = BeautifulSoup(response.text, 'html.parser')
+        scripts = soup.find_all('script', type='application/json')
+        
+        for script in scripts:
+            if script.string:
+                urls = extract_urls_from_text(script.string)
+                image_urls.extend(urls)
+        
+        # Remove duplicates
+        image_urls = list(set(image_urls))
+        
+        return {
+            "success": len(image_urls) > 0,
+            "username": username,
+            "image_urls": image_urls,
+            "total_images": len(image_urls),
+            "method": "direct_scrape"
+        }
     except Exception as e:
         return {"success": False, "error": str(e)}
 
 def extract_urls_from_text(text):
-    """Extract image URLs from text content"""
+    """Extract image URLs from text"""
     urls = []
-    
-    # URL patterns for Instagram images
     patterns = [
-        # Direct image URLs
         r'https?://[^\s]+\.(?:jpg|jpeg|png|gif|webp)[^\s]*',
-        r'https?://[^\s]*(?:instagram|cdninstagram|fbcdn)[^\s]*\.(?:jpg|jpeg|png|gif|webp)[^\s]*',
-        
-        # URLs in the format "URL: https://..."
-        r'URL:\s*(https?://[^\s]+)',
-        
-        # Instagram post URLs
-        r'https?://(?:www\.)?instagram\.com/p/[A-Za-z0-9_-]+',
-        
-        # Any http/https URL that might be an image
-        r'(https?://[^\s]+(?:jpg|jpeg|png|gif|webp)[^\s]*)',
-        r'(https?://[^\s]+media[^\s]+)',
+        r'https?://[^\s]*(?:instagram|cdninstagram|fbcdn)[^\s]*\.(?:jpg|jpeg|png|gif|webp)',
+        r'https?://[^\s]+/p/[A-Za-z0-9_-]+',
+        r'"display_url":"([^"]+)"',
+        r'"display_src":"([^"]+)"',
+        r'"url":"([^"]+\.(?:jpg|jpeg|png))"',
     ]
     
     for pattern in patterns:
         found = re.findall(pattern, text, re.IGNORECASE)
         for url in found:
-            # Clean up URL
             if isinstance(url, tuple):
-                url = url[0]  # Take first group if multiple
-            url = re.sub(r'[,\s"\']+$', '', str(url))
-            
-            # Validate URL
+                url = url[0]
+            url = str(url).replace('\\u0026', '&').strip()
             if url.startswith(('http://', 'https://')) and len(url) > 10:
-                if url not in urls:  # Avoid duplicates
+                if url not in urls:
                     urls.append(url)
     
     return urls
-
-@app.route('/debug/vercel', methods=['GET'])
-def debug_vercel():
-    """Debug endpoint to check Vercel environment"""
-    import tempfile
-    
-    # Test file writing
-    test_results = {}
-    
-    # Test 1: Write to current directory
-    try:
-        with open('test.txt', 'w') as f:
-            f.write('test')
-        test_results['current_dir'] = os.path.exists('test.txt')
-        if os.path.exists('test.txt'):
-            os.remove('test.txt')
-    except:
-        test_results['current_dir'] = False
-    
-    # Test 2: Write to /tmp
-    try:
-        tmp_file = '/tmp/test.txt'
-        with open(tmp_file, 'w') as f:
-            f.write('test')
-        test_results['tmp_dir'] = os.path.exists(tmp_file)
-        if os.path.exists(tmp_file):
-            os.remove(tmp_file)
-    except:
-        test_results['tmp_dir'] = False
-    
-    # Test 3: Use tempfile
-    try:
-        with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
-            f.write('test')
-            temp_name = f.name
-        test_results['tempfile'] = os.path.exists(temp_name)
-        if os.path.exists(temp_name):
-            os.remove(temp_name)
-    except:
-        test_results['tempfile'] = False
-    
-    return jsonify({
-        "environment": "Vercel" if os.environ.get('VERCEL') else "Local",
-        "current_dir": os.getcwd(),
-        "writable_tests": test_results,
-        "temp_dir": tempfile.gettempdir()
-    })
 
 @app.route('/extract/<username>', methods=['GET'])
 def extract(username):
@@ -172,70 +147,18 @@ def extract(username):
     result = run_spydox_extractor(username)
     return jsonify(result)
 
-@app.route('/extract', methods=['POST'])
-def extract_post():
-    data = request.get_json()
-    if not data or 'username' not in data:
-        return jsonify({"success": False, "error": "Username required"}), 400
-    
-    username = data['username'].replace('@', '').strip()
-    result = run_spydox_extractor(username)
-    return jsonify(result)
-
-@app.route('/urls-only/<username>', methods=['GET'])
-def urls_only(username):
-    """Get only the image URLs"""
-    username = username.replace('@', '').strip()
-    result = run_spydox_extractor(username)
-    
-    if result.get('success'):
+@app.route('/debug/test', methods=['GET'])
+def debug_test():
+    """Test endpoint to check if Instagram is accessible"""
+    import requests
+    try:
+        response = requests.get('https://www.instagram.com', timeout=5)
         return jsonify({
-            "success": True,
-            "username": username,
-            "urls": result.get('image_urls', []),
-            "count": result.get('total_images', 0)
+            "instagram_accessible": response.status_code == 200,
+            "status_code": response.status_code
         })
-    else:
-        return jsonify(result)
-
-@app.route('/download/<username>', methods=['GET'])
-def download(username):
-    """Download URLs as file"""
-    username = username.replace('@', '').strip()
-    result = run_spydox_extractor(username)
-    
-    if result.get('success'):
-        urls = result.get('image_urls', [])
-        
-        # Create formatted output
-        output = f"Instagram Image URLs for @{username}\n"
-        output += "=" * 60 + "\n"
-        output += f"Total Images: {len(urls)}\n"
-        output += "=" * 60 + "\n\n"
-        
-        for i, url in enumerate(urls, 1):
-            output += f"{i}. {url}\n"
-        
-        file_obj = io.BytesIO()
-        file_obj.write(output.encode('utf-8'))
-        file_obj.seek(0)
-        
-        return send_file(
-            file_obj,
-            as_attachment=True,
-            download_name=f"instagram_{username}_urls.txt",
-            mimetype='text/plain'
-        )
-    else:
-        return jsonify(result)
-
-@app.route('/health', methods=['GET'])
-def health():
-    return jsonify({
-        "status": "healthy", 
-        "time": __import__('time').time(),
-        "environment": "Vercel" if os.environ.get('VERCEL') else "Local"
-    })
+    except Exception as e:
+        return jsonify({"error": str(e)})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
